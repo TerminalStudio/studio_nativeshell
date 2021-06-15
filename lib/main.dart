@@ -1,3 +1,5 @@
+import 'dart:ffi';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart';
 import 'package:nativeshell/nativeshell.dart';
@@ -33,9 +35,16 @@ class MyApp extends StatelessWidget {
 class MainWindowState extends WindowState {
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.all(20),
-      child: Center(child: Text('Welcome to NativeShell!')),
+    return Scaffold(
+      body: ElevatedButton(
+        child: Text('Click me!'),
+        onPressed: () {
+          final dylib = DynamicLibrary.executable();
+          final fn = dylib.lookupFunction<Void Function(), void Function()>('pty_new');
+          fn();
+          print('hello');
+        },
+      ),
     );
   }
 }

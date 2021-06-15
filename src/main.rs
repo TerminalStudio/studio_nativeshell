@@ -1,3 +1,6 @@
+#[link(name = "pty")]
+extern {}
+
 use nativeshell::{
     codec::Value,
     shell::{exec_bundle, register_observatory_listener, Context, ContextOptions},
