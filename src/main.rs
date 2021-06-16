@@ -10,7 +10,7 @@ nativeshell::include_flutter_plugins!();
 
 fn main() {
     exec_bundle();
-    register_observatory_listener("app_template".into());
+    register_observatory_listener("studio_nativeshell".into());
 
     env_logger::builder().format_timestamp(None).init();
 

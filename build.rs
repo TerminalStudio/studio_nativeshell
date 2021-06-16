@@ -1,6 +1,9 @@
 use nativeshell_build::{AppBundleOptions, BuildResult, Flutter, FlutterOptions, MacOSBundle};
 
 fn build_flutter() -> BuildResult<()> {
+    println!("cargo:rerun-if-changed=./lib/");
+    println!("cargo:rerun-if-changed=pubspec.yaml");
+
     Flutter::build(FlutterOptions {
         ..Default::default()
     })?;

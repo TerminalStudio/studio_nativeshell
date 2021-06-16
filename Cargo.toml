@@ -1,5 +1,5 @@
 [package]
-name = "app_template"
+name = "studio_nativeshell"
 version = "0.1.0"
 authors = ["Matej Knopp <matej.knopp@gmail.com>"]
 edition = "2018"
