@@ -13,9 +13,7 @@ This is a template for minimal NativeShell application.
 
 TL;DR
 ```
-dart sync_deps.dart clone
-dart sync_deps.dart checkout
-dart sync_deps.dart pub
+dart sync_deps.dart
 cargo run
 ```
 

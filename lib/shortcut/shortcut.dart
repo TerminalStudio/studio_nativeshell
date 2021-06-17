@@ -7,13 +7,13 @@ class TerminalShortcut {
 
   final Intent intent;
 
-  const TerminalShortcut(
-      {required this.name,
-      required Future Function(TerminalUiInteraction) onExecute,
-      Future<bool> Function(TerminalUiInteraction)? onIsAvailable,
-      required this.keyCombinations,
-      required this.intent})
-      : _onExecute = onExecute,
+  const TerminalShortcut({
+    required this.name,
+    required Future Function(TerminalUiInteraction) onExecute,
+    Future<bool> Function(TerminalUiInteraction)? onIsAvailable,
+    required this.keyCombinations,
+    required this.intent,
+  })  : _onExecute = onExecute,
         _onIsAvailable = onIsAvailable;
 
   final List<LogicalKeySet> keyCombinations;

@@ -3,10 +3,11 @@ import 'dart:io';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
+import 'package:nativeshell/accelerators.dart';
 import 'package:nativeshell/nativeshell.dart';
 import 'package:studio_nativeshell/shortcut/intents.dart';
-import 'package:studio_nativeshell/utils/build_mode.dart';
 import 'package:studio_nativeshell/utils/pty_terminal_backend.dart';
+import 'package:studio_nativeshell/utils/unawaited.dart';
 import 'package:tabs/tabs.dart';
 
 import 'package:flutter/material.dart' hide Tab, TabController;
@@ -14,6 +15,19 @@ import 'package:xterm/flutter.dart';
 import 'package:xterm/isolate.dart';
 import 'package:xterm/theme/terminal_style.dart';
 import 'package:xterm/xterm.dart';
+
+void dispatchIntent(Intent intent) {
+  final primaryContext = primaryFocus?.context;
+  if (primaryContext != null) {
+    final action = Actions.maybeFind<Intent>(
+      primaryContext,
+      intent: intent,
+    );
+    if (action != null && action.isEnabled(intent)) {
+      Actions.of(primaryContext).invokeAction(action, intent, primaryContext);
+    }
+  }
+}
 
 class MainWindowState extends WindowState {
   @override
@@ -31,12 +45,60 @@ class MainWindowState extends WindowState {
   }
 
   @override
+  WindowSizingMode get windowSizingMode =>
+      WindowSizingMode.atLeastIntrinsicSize;
+
+  @override
   Future<void> initializeWindow(Size intrinsicContentSize) async {
-    // if (Platform.isMacOS) {
-    //   await Menu(_buildMenu).setAsAppMenu();
-    // }
+    await setupMenu();
     await window.setTitle('Terminal Studio');
     return super.initializeWindow(Size(1280, 720));
+  }
+
+  Future<void> setupMenu() async {
+    if (Platform.isMacOS) {
+      await Menu(buildMenu).setAsAppMenu();
+    }
+  }
+
+  List<MenuItem> buildMenu() {
+    return [
+      MenuItem.children(title: 'App', children: [
+        MenuItem.withRole(role: MenuItemRole.hide),
+        MenuItem.withRole(role: MenuItemRole.hideOtherApplications),
+        MenuItem.withRole(role: MenuItemRole.showAll),
+        MenuItem.separator(),
+        MenuItem.withRole(role: MenuItemRole.quitApplication),
+      ]),
+      MenuItem.children(title: 'Window', role: MenuRole.window, children: [
+        MenuItem.withRole(role: MenuItemRole.minimizeWindow),
+        MenuItem.withRole(role: MenuItemRole.zoomWindow),
+      ]),
+      MenuItem.children(title: 'Edit', children: [
+        MenuItem(
+          title: 'Copy',
+          action: () => dispatchIntent(TerminalCopyIntent()),
+          accelerator: cmdOrCtrl + 'c',
+        ),
+        MenuItem(
+          title: 'Paste',
+          action: () => dispatchIntent(TerminalPasteIntent()),
+          accelerator: cmdOrCtrl + 'v',
+        ),
+      ]),
+      MenuItem.children(title: 'View', children: [
+        MenuItem(
+          title: 'Zoom In',
+          action: () => dispatchIntent(TerminalZoomInIntent()),
+          accelerator: cmdOrCtrl + '+',
+        ),
+        MenuItem(
+          title: 'Zoom Out',
+          action: () => dispatchIntent(TerminalZoomOutIntent()),
+          accelerator: cmdOrCtrl + '-',
+        ),
+      ]),
+    ];
   }
 }
 
@@ -78,8 +140,9 @@ class _MyHomePageState extends State<MyHomePage> {
             actions: [
               TabsGroupAction(
                 icon: CupertinoIcons.add,
-                onTap: (group) {
-                  group.addTab(buildTab(), activate: true);
+                onTap: (group) async {
+                  final tab = await buildTab();
+                  group.addTab(tab, activate: true);
                 },
               )
             ],
@@ -89,12 +152,13 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  void addTab() {
-    this.group.addTab(buildTab(), activate: true);
+  void addTab() async {
+    group.addTab(await buildTab(), activate: true);
   }
 
-  Tab buildTab() {
+  Future<Tab> buildTab() async {
     tabCount++;
+    var tabIsClosed = false;
 
     final tab = TabController();
 
@@ -113,25 +177,15 @@ class _MyHomePageState extends State<MyHomePage> {
 
     // pty.write('cd\n');
 
-    final terminal = (!BuildMode.isDebug) || true
-        ? TerminalIsolate(
-            onTitleChange: tab.setTitle,
-            backend: backend,
-            platform: getPlatform(true),
-            minRefreshDelay: Duration(milliseconds: 50),
-            maxLines: 10000,
-          )
-        : Terminal(
-            onTitleChange: tab.setTitle,
-            backend: backend,
-            platform: getPlatform(true),
-            maxLines: 10000,
-          );
+    final terminal = TerminalIsolate(
+      onTitleChange: tab.setTitle,
+      backend: backend,
+      platform: getPlatform(true),
+      minRefreshDelay: Duration(milliseconds: 50),
+      maxLines: 10000,
+    );
 
-    //terminal.debug.enable(true);
-    if (terminal is TerminalIsolate) {
-      terminal.start();
-    }
+    await terminal.start();
 
     final focusNode = FocusNode();
 
@@ -139,89 +193,18 @@ class _MyHomePageState extends State<MyHomePage> {
       focusNode.requestFocus();
     });
 
-    terminal.backendExited.then((_) => tab.requestClose());
+    terminal.backendExited
+        .then(
+          (_) => tab.requestClose(),
+        )
+        .unawaited;
 
     return Tab(
       controller: tab,
       title: 'Terminal',
-      content: GestureDetector(
-        onLongPress: () {
-          print('onLongPress');
-        },
-        // onDoubleTapDown: (details) {
-        onDoubleTap: () {
-          print('onDoubleTap \$details');
-        },
-        //   print('onDoubleTapDown \$details');
-        // },
-        // onTertiaryTapDown: (details) {
-        //   print('onTertiaryTapDown $details');
-        // },
-        onSecondaryTapDown: (details) async {
-          final clipboardData = await Clipboard.getData('text/plain');
-
-          final hasSelection = !(terminal.selection?.isEmpty ?? true);
-          final clipboardHasData = clipboardData?.text?.isNotEmpty == true;
-
-          // showMacosContextMenu(
-          //   context: context,
-          //   globalPosition: details.globalPosition,
-          //   children: [
-          //     MacosContextMenuItem(
-          //       content: Text('Copy'),
-          //       trailing: Text('⌘ C'),
-          //       enabled: hasSelection,
-          //       onTap: () {
-          //         final text = terminal.selectedText ?? '';
-          //         Clipboard.setData(ClipboardData(text: text));
-          //         terminal.clearSelection();
-          //         //terminal.debug.onMsg('copy ┤$text├');
-          //         terminal.refresh();
-          //         Navigator.of(context).pop();
-          //       },
-          //     ),
-          //     MacosContextMenuItem(
-          //       content: Text('Paste'),
-          //       trailing: Text('⌘ V'),
-          //       enabled: clipboardHasData,
-          //       onTap: () {
-          //         terminal.paste(clipboardData!.text!);
-          //         //terminal.debug.onMsg('paste ┤${clipboardData.text}├');
-          //         Navigator.of(context).pop();
-          //       },
-          //     ),
-          //     MacosContextMenuItem(
-          //       content: Text('Select All'),
-          //       trailing: Text('⌘ A'),
-          //       onTap: () {
-          //         print('Select All is currently not implemented.');
-          //         Navigator.of(context).pop();
-          //       },
-          //     ),
-          //     MacosContextMenuDivider(),
-          //     MacosContextMenuItem(
-          //       content: Text('Clear'),
-          //       trailing: Text('⌘ K'),
-          //       onTap: () {
-          //         print('Clear is currently not implemented.');
-          //         Navigator.of(context).pop();
-          //       },
-          //     ),
-          //     MacosContextMenuDivider(),
-          //     MacosContextMenuItem(
-          //       content: Text('Kill'),
-          //       onTap: () {
-          //         terminal.terminateBackend();
-          //         Navigator.of(context).pop();
-          //       },
-          //     ),
-          // ],
-          // );
-        },
-        child: TerminalTab(
-          terminal: terminal,
-          focusNode: focusNode,
-        ),
+      content: TerminalTab(
+        terminal: terminal,
+        focusNode: focusNode,
       ),
       onActivate: () {
         focusNode.requestFocus();
@@ -232,6 +215,13 @@ class _MyHomePageState extends State<MyHomePage> {
         });
       },
       onClose: () {
+        // this handler can be called multiple times.
+        // e.g. click to close tab => handler => terminateBackend => exitedEvent => close tab
+        // which leads to an inconsistent tabCount value
+        if (tabIsClosed) {
+          return;
+        }
+        tabIsClosed = true;
         terminal.terminateBackend();
 
         tabCount--;
@@ -284,19 +274,11 @@ class _TerminalTabState extends State<TerminalTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Shortcuts(
-      shortcuts: {
-        _withModifier(LogicalKeyboardKey.equal): FontSizeIncreaseIntent(1),
-        _withModifier(LogicalKeyboardKey.minus): FontSizeDecreaseIntent(1),
-      },
-      child: Actions(
-        actions: {
-          FontSizeIncreaseIntent: CallbackAction<FontSizeIncreaseIntent>(
-            onInvoke: onFontSizeIncreaseIntent,
-          ),
-          FontSizeDecreaseIntent: CallbackAction<FontSizeDecreaseIntent>(
-            onInvoke: onFontSizeDecreaseIntent,
-          ),
+    return Actions(
+      actions: actions,
+      child: GestureDetector(
+        onSecondaryTapDown: (details) async {
+          await showContextMenu(details);
         },
         child: CupertinoScrollbar(
           controller: widget.scrollController,
@@ -316,6 +298,60 @@ class _TerminalTabState extends State<TerminalTab> {
     );
   }
 
+  late final actions = <Type, Action<Intent>>{
+    TerminalCopyIntent: CallbackAction(onInvoke: (_) => onCopy()),
+    TerminalPasteIntent: CallbackAction(onInvoke: (_) => onPaste()),
+    TerminalZoomInIntent: CallbackAction(onInvoke: (_) => onZoomIn()),
+    TerminalZoomOutIntent: CallbackAction(onInvoke: (_) => onZoomOut()),
+  };
+
+  Future<void> showContextMenu(TapDownDetails e) async {
+    final menu = Menu(buildContextMenu);
+    await Window.of(context).showPopupMenu(menu, e.globalPosition);
+  }
+
+  List<MenuItem> buildContextMenu() {
+    return [
+      MenuItem(
+        title: 'Zoom In',
+        action: onZoomIn,
+        accelerator: cmdOrCtrl + '+',
+      ),
+      MenuItem(
+        title: 'Zoom Out',
+        action: onZoomOut,
+        accelerator: cmdOrCtrl + '-',
+      ),
+      MenuItem.separator(),
+      MenuItem(
+        title: 'Copy',
+        action: onCopy,
+        accelerator: cmdOrCtrl + 'c',
+      ),
+      MenuItem(
+        title: 'Paste',
+        action: onPaste,
+        accelerator: cmdOrCtrl + 'v',
+      ),
+      MenuItem(
+        title: 'Select all',
+        action: () {},
+        accelerator: cmdOrCtrl + 'a',
+      ),
+      MenuItem.separator(),
+      MenuItem(
+        title: 'Clear',
+        action: () {},
+        accelerator: cmdOrCtrl + 'k',
+      ),
+      MenuItem(
+        title: 'Kill',
+        action: onKill,
+        accelerator: cmdOrCtrl + 'e',
+      ),
+    ];
+  }
+
   void updateFontSize(int delta) {
     final minFontSize = 4;
     final maxFontSize = 40;
@@ -329,23 +365,42 @@ class _TerminalTabState extends State<TerminalTab> {
     setState(() => fontSize = newFontSize);
   }
 
-  void onFontSizeIncreaseIntent(FontSizeIncreaseIntent intent) {
+  void onZoomIn() {
     updateFontSize(1);
   }
 
-  void onFontSizeDecreaseIntent(FontSizeDecreaseIntent intent) {
+  void onZoomOut() {
     updateFontSize(-1);
   }
-}
 
-LogicalKeySet _withModifier(LogicalKeyboardKey key) {
-  late final LogicalKeyboardKey modifier;
-
-  if (Platform.isMacOS) {
-    modifier = LogicalKeyboardKey.meta;
-  } else {
-    modifier = LogicalKeyboardKey.control;
+  void onCopy() {
+    final text = widget.terminal.selectedText ?? '';
+    Clipboard.setData(ClipboardData(text: text));
+    widget.terminal.clearSelection();
+    //widget.terminal.debug.onMsg('copy ┤$text├');
+    widget.terminal.refresh();
   }
 
-  return LogicalKeySet(modifier, key);
+  void onPaste() async {
+    final clipboardData = await Clipboard.getData('text/plain');
+
+    final clipboardHasData = clipboardData?.text?.isNotEmpty == true;
+
+    if (clipboardHasData) {
+      widget.terminal.paste(clipboardData!.text!);
+      //terminal.debug.onMsg('paste ┤${clipboardData.text}├');
+    }
+  }
+
+  void onSelectAll() {
+    print('Select All is currently not implemented.');
+  }
+
+  void onClear() {
+    print('Clear is currently not implemented.');
+  }
+
+  void onKill() {
+    widget.terminal.terminateBackend();
+  }
 }

@@ -1,13 +1,15 @@
 import 'package:flutter/widgets.dart';
 
-class FontSizeIncreaseIntent extends Intent {
-  const FontSizeIncreaseIntent(this.pixels);
+class TerminalZoomInIntent extends Intent {}
 
-  final int pixels;
-}
+class TerminalZoomOutIntent extends Intent {}
 
-class FontSizeDecreaseIntent extends Intent {
-  const FontSizeDecreaseIntent(this.pixels);
+class TerminalCopyIntent extends Intent {}
 
-  final int pixels;
-}
+class TerminalPasteIntent extends Intent {}
+
+class TerminalSelectAllIntent extends Intent {}
+
+class TerminalClearIntent extends Intent {}
+
+class TerminalKillIntent extends Intent {}

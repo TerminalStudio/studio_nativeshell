@@ -2,14 +2,46 @@ use core::slice;
 use std::io::Read;
 use std::mem::{self};
 use std::os::raw::c_char;
+use std::sync::{Arc, Mutex};
+use std::thread::sleep;
+use std::time::Duration;
 use std::usize;
 use std::{ffi::CStr, thread};
 
 use allo_isolate::Isolate;
-use portable_pty::{native_pty_system, Child, CommandBuilder, PtyPair, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, ExitStatus, PtyPair, PtySize};
 
+// StudioPty stores all states that is associated with the pty.
 struct StudioPty {
     pair: PtyPair,
+    child: Arc<SharedChild>,
+}
+
+// SharedChild is a wrapper on Child to allow the child being accessed from
+// multiple threads.
+struct SharedChild {
+    child: Mutex<Box<dyn Child + Send + Sync>>,
+}
+
+impl SharedChild {
+    fn new(child: Box<dyn Child + Send + Sync>) -> Self {
+        let child = Mutex::new(child);
+        Self { child }
+    }
+
+    fn wait(&self) -> ExitStatus {
+        loop {
+            let status = self.child.lock().unwrap().try_wait().unwrap();
+            if let Some(exitcode) = status {
+                return exitcode;
+            }
+            sleep(Duration::from_millis(100))
+        }
+    }
+
+    fn kill(&self) {
+        self.child.lock().unwrap().kill().unwrap();
+    }
 }
 
 #[no_mangle]
@@ -30,13 +62,15 @@ pub extern "C" fn pty_new(
     cmd.args(&arguments);
 
     let child = pair.slave.spawn_command(cmd).unwrap();
-    thread_wait_child_exit(child, exitcode_port);
+    let child = Arc::new(SharedChild::new(child));
+    thread_wait_child_exit(Arc::clone(&child), exitcode_port);
 
     let reader = pair.master.try_clone_reader().unwrap();
     thread_read_output(reader, output_port);
 
-    let pty = Box::new(StudioPty { pair });
-    Box::into_raw(pty) as usize
+    let pty = Box::new(StudioPty { pair, child });
+    let pty_handle = Box::into_raw(pty) as usize;
+    pty_handle
 }
 
 fn new_pty() -> PtyPair {
@@ -70,31 +104,23 @@ fn save_arguments(argc: isize, argv: *const *const c_char) -> Vec<String> {
     return result;
 }
 
-fn thread_wait_child_exit(mut child: Box<dyn Child + Send + Sync>, exitcode_port: Isolate) {
+fn thread_wait_child_exit(child: Arc<SharedChild>, exitcode_port: Isolate) {
     thread::spawn(move || {
-        let status = child.wait();
-        match status {
-            Ok(exitcode) => {
-                exitcode_port.post(exitcode.success());
-            }
-            Err(error) => {
-                dbg!(error);
-                return;
-            }
-        }
+        let exitcode = child.wait();
+        exitcode_port.post(exitcode.success());
     });
 }
 
 fn thread_read_output(mut reader: Box<dyn Read + Send>, output_port: Isolate) {
     thread::spawn(move || {
-        let mut buffer = [0; 4096];
+        let mut buffer = [0u8; 4096];
 
         loop {
             let ret = reader.read(&mut buffer);
             match ret {
                 Ok(size) => {
                     if size == 0 {
-                        return;
+                        break;
                     }
                     let data = Vec::from(&buffer[..size]);
                     output_port.post(data);
@@ -138,6 +164,13 @@ pub extern "C" fn pty_resize(
         Ok(_) => true,
         Err(_) => false,
     }
+}
+
+#[no_mangle]
+pub extern "C" fn pty_kill(handle: *mut usize) {
+    let pty = unsafe { Box::<StudioPty>::from_raw(handle.cast()) };
+    pty.child.kill();
+    mem::forget(pty);
 }
 
 #[no_mangle]

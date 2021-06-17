@@ -40,8 +40,6 @@ class NativePty {
       outputPort.sendPort.nativePort,
       exitcodePort.sendPort.nativePort,
     );
-
-    print('handle $_handle');
   }
 
   late final int _handle;
